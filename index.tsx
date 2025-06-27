@@ -8,9 +8,12 @@ import { useState, useEffect, useRef } from 'preact/hooks';
 import { GoogleGenAI, Chat } from '@google/genai';
 import { marked } from 'marked';
 
-// Per coding guidelines, the API key must be read from process.env.API_KEY.
-// The build environment must be configured to handle this.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Per Vite guidelines, client-side environment variables must be accessed via import.meta.env
+const apiKey = import.meta.env.VITE_API_KEY;
+if (!apiKey) {
+  throw new Error("VITE_API_KEY is not set. Please add it to your .env file.");
+}
+const ai = new GoogleGenAI({ apiKey });
 
 const SYSTEM_INSTRUCTION_ASSISTANT = `You are Local Lieutenant, an AI expert in shell commands, programming, and system administration. Your persona is helpful, knowledgeable, and slightly formal, like a trusted technical aide. Your primary goal is to help users by providing accurate commands and clear, concise explanations.
 
@@ -31,6 +34,14 @@ type Message = {
 
 type Mode = 'assistant' | 'command';
 
+const TypingIndicator = () => (
+    <div class="typing-indicator">
+        <span></span>
+        <span></span>
+        <span></span>
+    </div>
+);
+
 function App() {
   const [chat, setChat] = useState<Chat | null>(null);
   const [history, setHistory] = useState<Message[]>([]);
@@ -38,6 +49,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [mode, setMode] = useState<Mode>('assistant');
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     const chatInstance = ai.chats.create({
@@ -75,15 +87,20 @@ function App() {
     });
   }, [history, isLoading]);
 
-  const handleSubmit = async (e: Event) => {
-    e.preventDefault();
+  const doSubmit = async () => {
     if (!inputValue.trim() || isLoading) return;
 
     const userMessage: Message = { role: 'user', content: inputValue };
-    setHistory((prev) => [...prev, userMessage]);
     const currentInput = inputValue;
+    
+    setHistory((prev) => [...prev, userMessage]);
     setInputValue('');
     setIsLoading(true);
+
+     // Reset textarea height after submit
+    if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+    }
 
     if (mode === 'assistant') {
       if (!chat) {
@@ -128,6 +145,21 @@ function App() {
     }
 
     setIsLoading(false);
+    textareaRef.current?.focus();
+  };
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        doSubmit();
+    }
+  };
+
+  const handleInput = (e: Event) => {
+    const textarea = e.target as HTMLTextAreaElement;
+    setInputValue(textarea.value);
+    textarea.style.height = 'auto';
+    textarea.style.height = `${textarea.scrollHeight}px`;
   };
   
   const handleModeChange = (newMode: Mode) => {
@@ -136,10 +168,18 @@ function App() {
 
   const handleClearChat = () => {
     setHistory([]);
+    // Re-initialize chat to clear server-side history for assistant mode
+     const chatInstance = ai.chats.create({
+      model: 'gemini-2.5-flash-preview-04-17',
+      config: {
+        systemInstruction: SYSTEM_INSTRUCTION_ASSISTANT,
+      },
+    });
+    setChat(chatInstance);
   };
 
   const placeholderText = mode === 'assistant'
-    ? "Ask your Lieutenant anything..."
+    ? "Ask your Lieutenant anything... (Shift+Enter for new line)"
     : "Describe the command you want to generate...";
 
   return (
@@ -186,10 +226,7 @@ function App() {
         {isLoading && (
            <div class="message model">
              <div class="content">
-                <div class="loading-indicator">
-                  <div class="spinner"></div>
-                  <span>Thinking...</span>
-                </div>
+                <TypingIndicator />
             </div>
            </div>
         )}
@@ -201,14 +238,16 @@ function App() {
             <input type="radio" id="mode-command" name="mode" value="command" checked={mode === 'command'} onChange={() => handleModeChange('command')} aria-label="Command Generator Mode"/>
             <label for="mode-command">Command Generator</label>
         </div>
-        <form class="input-form" onSubmit={handleSubmit}>
-            <input
-            type="text"
-            value={inputValue}
-            onInput={(e) => setInputValue((e.target as HTMLInputElement).value)}
-            placeholder={placeholderText}
-            aria-label="Your message"
-            disabled={isLoading}
+        <form class="input-form" onSubmit={(e) => { e.preventDefault(); doSubmit(); }}>
+            <textarea
+              ref={textareaRef}
+              value={inputValue}
+              onInput={handleInput}
+              onKeyDown={handleKeyDown}
+              placeholder={placeholderText}
+              aria-label="Your message"
+              disabled={isLoading}
+              rows={1}
             />
             <button type="submit" disabled={isLoading || !inputValue.trim()} aria-label="Send message">
             <span>&rarr;</span>
